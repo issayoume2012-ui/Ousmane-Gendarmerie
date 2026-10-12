@@ -304,7 +304,7 @@ database = "postgres"
 user = "postgres.tydfcnfrihfxiuuodhdq"
 password = "VOTRE_NOUVEAU_MOT_DE_PASSE"
 ''', language="toml")
-    st.caption("Détail technique : " + str(db_error)[:350])
+    st.caption("Détail technique masqué pour éviter d’exposer des informations de connexion. Vérifiez les secrets et les journaux privés du déploiement.")
     st.stop()
 
 # ---------- Authentication: first-run setup ----------
@@ -453,102 +453,145 @@ def record_form(module, statuses, key_prefix, existing=None):
             st.success("Enregistrement effectué.")
             st.rerun()
 
+# Vocabulaire unique des exports : les noms techniques de la base ne sortent pas dans les documents.
+EXPORT_LABELS = {
+    "id":"Identifiant", "module":"Rubrique", "reference":"Référence", "title":"Intitulé",
+    "event_date":"Date de l’activité", "status":"État", "priority":"Priorité",
+    "person":"Personne ou service associé", "assigned_to":"Responsable du suivi",
+    "summary":"Résumé administratif", "actions_done":"Actions réalisées",
+    "actions_pending":"Actions à suivre", "due_date":"Échéance", "notes":"Observations",
+    "created_at":"Date de création", "updated_at":"Dernière modification",
+    "full_name":"Nom complet", "role":"Qualité ou rôle", "contact":"Coordonnées",
+    "linked_reference":"Référence associée", "category":"Catégorie", "file_name":"Nom du fichier",
+    "file_path":"Emplacement du fichier", "description":"Description", "url":"Lien associé",
+    "key":"Paramètre", "value":"Valeur", "username":"Utilisateur", "action":"Action effectuée",
+    "record_id":"Identifiant de la fiche", "details":"Détails de l’action",
+    "questionnaire_id":"Identifiant du questionnaire", "respondent":"Répondant",
+    "answers_json":"Réponses", "questions_json":"Questions", "completed_at":"Date de réponse",
+    "applied_at":"Date d’application", "version":"Version", "description":"Description",
+}
+EXPORT_VALUES = {
+    "New":"Nouveau", "In progress":"En cours", "Pending":"En attente", "Closed":"Clôturé",
+    "Completed":"Terminé", "Cancelled":"Annulé", "Scheduled":"Programmé", "Draft":"Brouillon",
+    "Normal":"Normale", "High":"Haute", "Low":"Basse", "Yes":"Oui", "No":"Non",
+}
+
 def dataframe_for_export(rows):
     if not rows:
         return pd.DataFrame()
-    df = pd.DataFrame(rows)
-    return df.drop(columns=["created_at", "updated_at"], errors="ignore")
+    df = pd.DataFrame(rows).drop(columns=["created_at", "updated_at"], errors="ignore")
+    df = df.rename(columns={col: EXPORT_LABELS.get(str(col), str(col).replace("_", " ").capitalize()) for col in df.columns})
+    # Traduire les valeurs anglaises usuelles sans altérer les textes rédigés par l’utilisateur.
+    return df.replace(EXPORT_VALUES)
 
-def export_buttons(df, prefix):
-    """Exports proposés uniquement en PDF, Word et Excel."""
-    if df is None or df.empty:
-        st.caption("Aucune donnée à exporter pour le moment.")
-        return
-    st.markdown('<div class="export-note">Formats de téléchargement disponibles : <strong>PDF · Word (.docx) · Excel (.xlsx)</strong>. Le format CSV n’est pas proposé.</div>', unsafe_allow_html=True)
-    c1, c2, c3 = st.columns(3)
-
-    # Excel
-    xlsx_buf = io.BytesIO()
-    with pd.ExcelWriter(xlsx_buf, engine="openpyxl") as writer:
-        df.to_excel(writer, index=False, sheet_name="Donnees")
-        ws = writer.sheets["Donnees"]
+@st.cache_data(show_spinner=False, max_entries=12, ttl=300)
+def _excel_export_bytes(columns, rows):
+    frame = pd.DataFrame(rows, columns=columns)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        frame.to_excel(writer, index=False, sheet_name="Données")
+        ws = writer.sheets["Données"]
         ws.freeze_panes = "A2"
         ws.auto_filter.ref = ws.dimensions
         for col_cells in ws.columns:
             max_len = min(max((len(str(cell.value or "")) for cell in col_cells), default=12) + 2, 42)
             ws.column_dimensions[col_cells[0].column_letter].width = max(12, max_len)
-    c1.download_button("📊 Télécharger Excel", xlsx_buf.getvalue(), f"{prefix}.xlsx",
-                       "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
+    return buf.getvalue()
 
-    # Word
-    try:
-        from docx import Document
-        from docx.shared import Inches, Pt, RGBColor
-        word_buf = io.BytesIO()
-        docx = Document()
-        section = docx.sections[0]
-        section.top_margin = Inches(0.55)
-        section.bottom_margin = Inches(0.55)
-        title = docx.add_heading("Sergent Ousmane Youm", 0)
-        title.runs[0].font.color.rgb = RGBColor(22, 59, 104)
-        docx.add_paragraph("RÉPUBLIQUE DU SÉNÉGAL — MINISTÈRE DES FORCES ARMÉES — GENDARMERIE NATIONALE")
-        docx.add_heading(f"Export : {str(prefix).replace('_', ' ').title()}", level=1)
-        docx.add_paragraph(f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}")
-        # Word tables are easiest to read in landscape-like compact format; keep all fields/rows.
-        table = docx.add_table(rows=1, cols=len(df.columns))
-        table.style = "Table Grid"
-        for i, col in enumerate(df.columns):
-            table.rows[0].cells[i].text = str(col)
-        for _, row in df.fillna("").astype(str).iterrows():
-            cells = table.add_row().cells
-            for i, col in enumerate(df.columns):
-                cells[i].text = str(row[col])
-        docx.save(word_buf)
-        c2.download_button("📝 Télécharger Word", word_buf.getvalue(), f"{prefix}.docx",
-                           "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
-    except Exception as exc:
-        c2.error("Export Word indisponible. Ajoutez python-docx à requirements.txt.")
+@st.cache_data(show_spinner=False, max_entries=12, ttl=300)
+def _word_export_bytes(columns, rows, prefix):
+    from docx import Document
+    from docx.shared import Inches, RGBColor
+    frame = pd.DataFrame(rows, columns=columns).fillna("").astype(str)
+    document = Document()
+    section = document.sections[0]
+    section.top_margin = Inches(0.55)
+    section.bottom_margin = Inches(0.55)
+    heading = document.add_heading("Sergent Ousmane Youm", 0)
+    heading.runs[0].font.color.rgb = RGBColor(22, 59, 104)
+    document.add_paragraph("RÉPUBLIQUE DU SÉNÉGAL — MINISTÈRE DES FORCES ARMÉES — GENDARMERIE NATIONALE")
+    document.add_heading(f"Export : {str(prefix).replace('_', ' ').title()}", level=1)
+    document.add_paragraph(f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}")
+    table = document.add_table(rows=1, cols=max(1, len(frame.columns)))
+    table.style = "Table Grid"
+    for i, col in enumerate(frame.columns):
+        table.rows[0].cells[i].text = str(col)
+    for _, row in frame.iterrows():
+        cells = table.add_row().cells
+        for i, col in enumerate(frame.columns):
+            cells[i].text = str(row[col])
+    buf = io.BytesIO()
+    document.save(buf)
+    return buf.getvalue()
 
-    # PDF
+@st.cache_data(show_spinner=False, max_entries=12, ttl=300)
+def _pdf_export_bytes(columns, rows, prefix):
+    from xml.sax.saxutils import escape
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import landscape, A4
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    frame = pd.DataFrame(rows, columns=columns).fillna("").astype(str)
+    buf = io.BytesIO()
+    doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=0.65*cm, leftMargin=0.65*cm, topMargin=0.8*cm, bottomMargin=0.8*cm)
+    styles = getSampleStyleSheet()
+    cell_style = ParagraphStyle("CellFR", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
+    story = [Paragraph("Sergent Ousmane Youm", styles["Title"]),
+             Paragraph("RÉPUBLIQUE DU SÉNÉGAL — MINISTÈRE DES FORCES ARMÉES — GENDARMERIE NATIONALE", styles["Normal"]),
+             Spacer(1, 0.25*cm),
+             Paragraph(f"Export : {escape(str(prefix).replace('_', ' ').title())} · {datetime.now().strftime('%d/%m/%Y à %H:%M')}", styles["Heading2"]),
+             Spacer(1, 0.2*cm)]
+    # Le PDF privilégie la lisibilité : 250 lignes au maximum et 8 colonnes ; Excel/Word gardent tout.
+    subset = frame.head(250)
+    cols = list(subset.columns)[:8]
+    data = [[Paragraph(escape(str(c)), cell_style) for c in cols]]
+    for _, row in subset.iterrows():
+        data.append([Paragraph(escape(str(row[c])[:500]), cell_style) for c in cols])
+    available_width = landscape(A4)[0] - 1.3*cm
+    widths = [available_width / max(1, len(cols))] * len(cols)
+    table = Table(data, colWidths=widths, repeatRows=1, splitByRow=1)
+    table.setStyle(TableStyle([
+        ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#163b68")),
+        ("TEXTCOLOR",(0,0),(-1,0),colors.white), ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
+        ("GRID",(0,0),(-1,-1),0.25,colors.HexColor("#aab7c8")), ("VALIGN",(0,0),(-1,-1),"TOP"),
+        ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#eef3f8")]),
+        ("LEFTPADDING",(0,0),(-1,-1),3), ("RIGHTPADDING",(0,0),(-1,-1),3),
+        ("TOPPADDING",(0,0),(-1,-1),3), ("BOTTOMPADDING",(0,0),(-1,-1),3),
+    ]))
+    story.append(table)
+    if len(frame) > 250 or len(frame.columns) > 8:
+        story += [Spacer(1, 0.2*cm), Paragraph("Pour obtenir toutes les lignes et toutes les colonnes, utilisez l’export Excel ou Word.", styles["Normal"])]
+    doc.build(story)
+    return buf.getvalue()
+
+def export_buttons(df, prefix):
+    """Génère des exports en français. Les fichiers sont mis en cache pour accélérer les ré-exécutions."""
+    if df is None or df.empty:
+        st.caption("Aucune donnée à exporter pour le moment.")
+        return
+    # Garantir un libellé français même si un appel transmet encore des colonnes techniques.
+    df = df.copy().rename(columns={col: EXPORT_LABELS.get(str(col), str(col).replace("_", " ").capitalize()) for col in df.columns})
+    df = df.replace(EXPORT_VALUES).fillna("")
+    columns = tuple(str(c) for c in df.columns)
+    rows = tuple(tuple(str(v) for v in row) for row in df.itertuples(index=False, name=None))
+    st.markdown('<div class="export-note">Formats de téléchargement : <strong>PDF · Word (.docx) · Excel (.xlsx)</strong>. Documents générés en français.</div>', unsafe_allow_html=True)
+    c1, c2, c3 = st.columns(3)
     try:
-        from reportlab.lib import colors
-        from reportlab.lib.pagesizes import landscape, A4
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer
-        from reportlab.lib.styles import getSampleStyleSheet
-        from reportlab.lib.units import cm
-        from reportlab.lib.utils import simpleSplit
-        pdf_buf = io.BytesIO()
-        doc = SimpleDocTemplate(pdf_buf, pagesize=landscape(A4), rightMargin=0.65*cm, leftMargin=0.65*cm, topMargin=0.8*cm, bottomMargin=0.8*cm)
-        styles = getSampleStyleSheet()
-        story = [Paragraph("Sergent Ousmane Youm", styles["Title"]),
-                 Paragraph("RÉPUBLIQUE DU SÉNÉGAL — MINISTÈRE DES FORCES ARMÉES — GENDARMERIE NATIONALE", styles["Normal"]),
-                 Spacer(1, 0.25*cm), Paragraph(f"Export : {str(prefix).replace('_', ' ').title()} · {datetime.now().strftime('%d/%m/%Y %H:%M')}", styles["Heading2"]), Spacer(1, 0.2*cm)]
-        subset = df.head(250).fillna("").astype(str)
-        cols = list(subset.columns)[:8]
-        data = [[Paragraph(str(c)[:80], styles["BodyText"]) for c in cols]]
-        for _, row in subset.iterrows():
-            data.append([Paragraph(str(row[c])[:240].replace("&", "&amp;").replace("<", "&lt;"), styles["BodyText"]) for c in cols])
-        available_width = landscape(A4)[0] - 1.3*cm
-        widths = [available_width / max(1, len(cols))] * len(cols)
-        table = Table(data, colWidths=widths, repeatRows=1)
-        table.setStyle(TableStyle([
-            ("BACKGROUND",(0,0),(-1,0),colors.HexColor("#163b68")),
-            ("TEXTCOLOR",(0,0),(-1,0),colors.white),
-            ("FONTNAME",(0,0),(-1,0),"Helvetica-Bold"),
-            ("FONTSIZE",(0,0),(-1,-1),6.5),
-            ("GRID",(0,0),(-1,-1),0.25,colors.HexColor("#aab7c8")),
-            ("VALIGN",(0,0),(-1,-1),"TOP"),
-            ("ROWBACKGROUNDS",(0,1),(-1,-1),[colors.white,colors.HexColor("#eef3f8")]),
-            ("LEFTPADDING",(0,0),(-1,-1),3), ("RIGHTPADDING",(0,0),(-1,-1),3),
-        ]))
-        story.append(table)
-        if len(df) > 250:
-            story.append(Spacer(1, 0.2*cm))
-            story.append(Paragraph("PDF limité aux 250 premières lignes. Téléchargez le fichier Excel pour obtenir l’ensemble des données.", styles["Normal"]))
-        doc.build(story)
-        c3.download_button("📕 Télécharger PDF", pdf_buf.getvalue(), f"{prefix}.pdf", "application/pdf", use_container_width=True)
+        xlsx = _excel_export_bytes(columns, rows)
+        c1.download_button("📊 Télécharger Excel", xlsx, f"{prefix}.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", use_container_width=True)
     except Exception:
-        c3.error("Export PDF indisponible. Ajoutez reportlab à requirements.txt.")
+        c1.error("La création du fichier Excel a échoué. Réessayez ou contactez le responsable technique.")
+    try:
+        word = _word_export_bytes(columns, rows, prefix)
+        c2.download_button("📝 Télécharger Word", word, f"{prefix}.docx", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", use_container_width=True)
+    except Exception:
+        c2.error("La création du fichier Word a échoué. Vérifiez la dépendance python-docx.")
+    try:
+        pdf = _pdf_export_bytes(columns, rows, prefix)
+        c3.download_button("📕 Télécharger PDF", pdf, f"{prefix}.pdf", "application/pdf", use_container_width=True)
+    except Exception:
+        c3.error("La création du fichier PDF a échoué. Vérifiez la dépendance reportlab.")
 
 def show_records_module(label, module, statuses):
     st.markdown(f'<div class="section-head">{label}</div>', unsafe_allow_html=True)
