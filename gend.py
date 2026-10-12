@@ -201,6 +201,7 @@ class _ConnectionCompat:
 def connect():
     return _ConnectionCompat()
 
+@st.cache_resource(show_spinner=False)
 def init_db():
     with connect() as con:
         con.executescript("""
@@ -299,6 +300,7 @@ def init_db():
 def now_iso():
     return datetime.now().isoformat(timespec="seconds")
 
+@st.cache_data(ttl=30, show_spinner=False, max_entries=128)
 def get_setting(key, default=None):
     with connect() as con:
         row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
@@ -308,6 +310,8 @@ def set_setting(key, value):
     with connect() as con:
         con.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, str(value)))
         con.commit()
+    # Invalider immédiatement les valeurs mises en cache après une modification.
+    get_setting.clear()
 
 def hash_password(password, salt=None):
     salt = salt or secrets.token_hex(16)
@@ -328,6 +332,8 @@ def audit(action, module=None, record_id=None, details=""):
         con.execute("INSERT INTO audit_log(username,action,module,record_id,details,created_at) VALUES(?,?,?,?,?,?)",
                     (username, action, module, record_id, str(details)[:1000], now_iso()))
         con.commit()
+    # Les actions journalisées suivent généralement une écriture : rafraîchir les listes.
+    st.cache_data.clear()
 
 try:
     init_db()
@@ -408,6 +414,7 @@ MODULES = {
 }
 ALL_STATUSES = sorted({s for _, statuses in MODULES.values() for s in statuses} | {"Nouveau", "En cours", "Clôturé"})
 
+@st.cache_data(ttl=10, show_spinner=False, max_entries=64)
 def fetch_records(module=None):
     with connect() as con:
         if module:
@@ -416,10 +423,12 @@ def fetch_records(module=None):
             rows = con.execute("SELECT * FROM records ORDER BY updated_at DESC, id DESC").fetchall()
     return [dict(r) for r in rows]
 
+@st.cache_data(ttl=10, show_spinner=False, max_entries=8)
 def fetch_people():
     with connect() as con:
         return [dict(r) for r in con.execute("SELECT * FROM people ORDER BY full_name").fetchall()]
 
+@st.cache_data(ttl=10, show_spinner=False, max_entries=8)
 def fetch_documents():
     with connect() as con:
         return [dict(r) for r in con.execute("SELECT * FROM documents ORDER BY id DESC").fetchall()]
@@ -725,7 +734,7 @@ with st.sidebar:
         audit("Déconnexion", "Sécurité")
         st.session_state.clear()
         st.rerun()
-    st.caption("SQLite local • Version administrative")
+    st.caption("Supabase PostgreSQL • Version administrative")
 
 st.markdown('<div class="hero"><div class="brand-row"><div class="brand-seal">GN<small>SÉNÉGAL</small></div><div class="brand-seal mfa">MFA<small>FORCES ARMÉES</small></div><div class="brand-identity"><div class="brand-kicker">République du Sénégal · Un Peuple – Un But – Une Foi</div><h1>SERGENT OUSMANE YOUM</h1><div class="brand-subtitle">Ministère des Forces armées · Gendarmerie nationale<br>Assistant personnel de travail • Dossiers, activités, ressources et rapports</div><div class="brand-pills"><span class="brand-pill">DOSSIERS & SUIVI</span><span class="brand-pill">ADMINISTRATION</span><span class="brand-pill">DOCUMENTS & RAPPORTS</span></div></div><div class="flag-sn" aria-label="Drapeau du Sénégal"><span class="fg"></span><span class="fy">★</span><span class="fr"></span></div></div></div>', unsafe_allow_html=True)
 st.markdown('<div class="topnav-wrap"><div class="nav-caption">Navigation principale</div>', unsafe_allow_html=True)
