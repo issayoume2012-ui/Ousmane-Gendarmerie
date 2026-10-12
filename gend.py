@@ -15,6 +15,9 @@ from datetime import datetime, date, timedelta
 import pandas as pd
 
 APP_DIR = Path(__file__).resolve().parent
+# Logos officiels : placer les fichiers autorisés dans le même dossier que ce script.
+LOGO_GENDARMERIE = APP_DIR / "logo_gendarmerie.png"
+LOGO_FORCES_ARMEES = APP_DIR / "logo_forces_armees.png"
 DATA_DIR = Path(os.environ.get("GENDARMERIE_DESK_DATA", APP_DIR / "data"))
 UPLOAD_DIR = DATA_DIR / "documents"
 BACKUP_DIR = DATA_DIR / "backups"
@@ -72,7 +75,41 @@ div[data-testid="stForm"] { background:#ffffff; padding:1rem; border-radius:14px
 .footer-panel p { color:#e0e8f4; margin:.3rem 0; line-height:1.55; }
 .footer-grid { display:grid; grid-template-columns:2fr 1fr; gap:1.2rem; }
 .footer-bottom { border-top:1px solid #ffffff35; margin-top:.8rem; padding-top:.65rem; font-size:.78rem; color:#d5dfed; }
-@media(max-width:700px) { .footer-grid { grid-template-columns:1fr; } .hero h1 {font-size:1.35rem;} .brand-row{align-items:flex-start;gap:.65rem;} .brand-seal{width:58px;height:58px;flex-basis:58px;font-size:.82rem;} .brand-seal.mfa{font-size:.72rem;} .flag-sn{width:54px;height:35px;flex-basis:54px;} .brand-subtitle{font-size:.8rem;} }
+@media(max-width:700px) {
+  .block-container {padding-left:.65rem !important;padding-right:.65rem !important;padding-top:.65rem !important;}
+  .footer-grid {grid-template-columns:1fr;}
+  .hero {padding:.9rem .8rem;border-radius:15px;}
+  .hero h1 {font-size:clamp(1.05rem,5vw,1.45rem);line-height:1.25;letter-spacing:.025em;overflow-wrap:anywhere;}
+  .brand-row {align-items:center;gap:.55rem;flex-wrap:wrap;}
+  .brand-identity {flex:1 1 100%;order:3;}
+  .brand-seal {width:48px;height:48px;flex:0 0 48px;font-size:.72rem;border-width:3px;}
+  .brand-seal small {font-size:.43rem;}
+  .brand-seal.mfa {font-size:.65rem;}
+  .brand-seal.mfa small {font-size:.38rem;}
+  .flag-sn {width:48px;height:31px;flex:0 0 48px;margin-left:auto;}
+  .brand-kicker {font-size:.62rem;letter-spacing:.06em;line-height:1.4;}
+  .brand-subtitle {font-size:.78rem;}
+  .brand-pill {font-size:.64rem;padding:.28rem .5rem;}
+  div[data-testid="stHorizontalBlock"] {gap:.45rem;flex-wrap:wrap;}
+  div[data-testid="stHorizontalBlock"] > div[data-testid="column"] {min-width:min(100%, 260px) !important;flex:1 1 100% !important;}
+  div[data-testid="stForm"] {padding:.65rem;}
+  .stButton button,.stDownloadButton button {width:100%;min-height:2.7rem;white-space:normal;}
+  div[data-testid="stTabs"] button {font-size:.82rem;padding:.45rem .55rem;}
+  div[data-testid="stDataFrame"],div[data-testid="stTable"] {max-width:100%;overflow-x:auto;}
+  input,textarea,select {font-size:16px !important;}
+  .metric-card {min-height:unset;padding:.75rem;}
+  .metric-value {font-size:1.5rem;}
+}
+@media(min-width:701px) and (max-width:1100px) {
+  .block-container {padding-left:1rem !important;padding-right:1rem !important;}
+  .hero h1 {font-size:1.65rem;}
+  .brand-row {gap:.7rem;}
+}
+/* Meilleure ergonomie tactile et prévention du débordement sur tous les écrans */
+img,svg,video {max-width:100%;height:auto;}
+.stApp {overflow-x:hidden;}
+button,[role="tab"] {touch-action:manipulation;}
+
 </style>
 """, unsafe_allow_html=True)
 
@@ -501,15 +538,39 @@ def _excel_export_bytes(columns, rows):
 @st.cache_data(show_spinner=False, max_entries=12, ttl=300)
 def _word_export_bytes(columns, rows, prefix):
     from docx import Document
-    from docx.shared import Inches, RGBColor
+    from docx.shared import Inches, RGBColor, Pt
     frame = pd.DataFrame(rows, columns=columns).fillna("").astype(str)
     document = Document()
     section = document.sections[0]
     section.top_margin = Inches(0.55)
     section.bottom_margin = Inches(0.55)
+    # Bandeau d'identité : insignes officiels si les fichiers fournis sont présents.
+    header = section.header
+    htable = header.add_table(rows=1, cols=2, width=Inches(6.8))
+    htable.autofit = False
+    htable.columns[0].width = Inches(1.0)
+    htable.columns[1].width = Inches(5.8)
+    left_cell, right_cell = htable.rows[0].cells
+    logo_added = False
+    for logo_path in (LOGO_GENDARMERIE, LOGO_FORCES_ARMEES):
+        if logo_path.exists():
+            try:
+                left_cell.paragraphs[0].add_run().add_picture(str(logo_path), width=Inches(0.62))
+                logo_added = True
+                break
+            except Exception:
+                pass
+    if not logo_added:
+        left_cell.text = "GN\nSÉNÉGAL"
+    phead = right_cell.paragraphs[0]
+    phead.alignment = 1
+    run = phead.add_run("RÉPUBLIQUE DU SÉNÉGAL\nMINISTÈRE DES FORCES ARMÉES — GENDARMERIE NATIONALE")
+    run.bold = True
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor(22, 59, 104)
     heading = document.add_heading("Sergent Ousmane Youm", 0)
+    heading.alignment = 1
     heading.runs[0].font.color.rgb = RGBColor(22, 59, 104)
-    document.add_paragraph("RÉPUBLIQUE DU SÉNÉGAL — MINISTÈRE DES FORCES ARMÉES — GENDARMERIE NATIONALE")
     document.add_heading(f"Export : {str(prefix).replace('_', ' ').title()}", level=1)
     document.add_paragraph(f"Généré le {datetime.now().strftime('%d/%m/%Y à %H:%M')}")
     table = document.add_table(rows=1, cols=max(1, len(frame.columns)))
@@ -537,10 +598,32 @@ def _pdf_export_bytes(columns, rows, prefix):
     doc = SimpleDocTemplate(buf, pagesize=landscape(A4), rightMargin=0.65*cm, leftMargin=0.65*cm, topMargin=0.8*cm, bottomMargin=0.8*cm)
     styles = getSampleStyleSheet()
     cell_style = ParagraphStyle("CellFR", parent=styles["BodyText"], fontName="Helvetica", fontSize=6.5, leading=8)
-    story = [Paragraph("Sergent Ousmane Youm", styles["Title"]),
-             Paragraph("RÉPUBLIQUE DU SÉNÉGAL — MINISTÈRE DES FORCES ARMÉES — GENDARMERIE NATIONALE", styles["Normal"]),
-             Spacer(1, 0.25*cm),
-             Paragraph(f"Export : {escape(str(prefix).replace('_', ' ').title())} · {datetime.now().strftime('%d/%m/%Y à %H:%M')}", styles["Heading2"]),
+    # Bandeau en tête du PDF : insignes officiels fournis par l'utilisateur si disponibles.
+    from reportlab.platypus import Image as ReportLabImage
+    from reportlab.lib.enums import TA_CENTER
+    title_style = ParagraphStyle("ExportTitleFR", parent=styles["Title"], alignment=TA_CENTER,
+                                 textColor=colors.HexColor("#163b68"), fontSize=19, leading=23, spaceAfter=5)
+    identity_style = ParagraphStyle("ExportIdentityFR", parent=styles["Normal"], alignment=TA_CENTER,
+                                    fontSize=8, leading=11, textColor=colors.HexColor("#34465f"))
+    available_width = landscape(A4)[0] - 1.3*cm
+    logo_cells = []
+    for logo_path in (LOGO_GENDARMERIE, LOGO_FORCES_ARMEES):
+        if logo_path.exists():
+            try:
+                logo_cells.append(ReportLabImage(str(logo_path), width=1.25*cm, height=1.25*cm, kind="proportional"))
+            except Exception:
+                pass
+    if not logo_cells:
+        logo_cells = [Paragraph("<b>GN<br/>SÉNÉGAL</b>", identity_style)]
+    logo_cells.append(Paragraph("<b>RÉPUBLIQUE DU SÉNÉGAL</b><br/>MINISTÈRE DES FORCES ARMÉES<br/>GENDARMERIE NATIONALE", identity_style))
+    if len(logo_cells) == 2 and isinstance(logo_cells[0], ReportLabImage):
+        logo_cells.append(Paragraph("", identity_style))
+    banner = Table([logo_cells], colWidths=[2.2*cm, available_width-4.4*cm, 2.2*cm] if len(logo_cells)==3 else [2.2*cm, available_width-2.2*cm])
+    banner.setStyle(TableStyle([("VALIGN",(0,0),(-1,-1),"MIDDLE"),("ALIGN",(0,0),(-1,-1),"CENTER"),
+                                ("LINEBELOW",(0,0),(-1,-1),1.2,colors.HexColor("#d6b35d")),
+                                ("BOTTOMPADDING",(0,0),(-1,-1),6)]))
+    story = [banner, Spacer(1, 0.12*cm), Paragraph("Sergent Ousmane Youm", title_style),
+             Paragraph(f"Export : {escape(str(prefix).replace('_', ' ').title())} · {datetime.now().strftime('%d/%m/%Y à %H:%M')}", identity_style),
              Spacer(1, 0.2*cm)]
     # Le PDF privilégie la lisibilité : 250 lignes au maximum et 8 colonnes ; Excel/Word gardent tout.
     subset = frame.head(250)
@@ -548,7 +631,6 @@ def _pdf_export_bytes(columns, rows, prefix):
     data = [[Paragraph(escape(str(c)), cell_style) for c in cols]]
     for _, row in subset.iterrows():
         data.append([Paragraph(escape(str(row[c])[:500]), cell_style) for c in cols])
-    available_width = landscape(A4)[0] - 1.3*cm
     widths = [available_width / max(1, len(cols))] * len(cols)
     table = Table(data, colWidths=widths, repeatRows=1, splitByRow=1)
     table.setStyle(TableStyle([
