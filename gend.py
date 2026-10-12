@@ -27,6 +27,14 @@ st.set_page_config(page_title="Sergent Ousmane Youm", page_icon="🇸🇳", layo
 # ---------- Styles ----------
 st.markdown("""
 <style>
+/* Masquer la barre Streamlit (Share, étoile, édition, GitHub et menu). */
+[data-testid="stToolbar"],
+[data-testid="stHeaderActionElements"],
+[data-testid="stStatusWidget"],
+#MainMenu,
+header[data-testid="stHeader"] button,
+header[data-testid="stHeader"] a { visibility:hidden !important; display:none !important; }
+[data-testid="stHeader"] { height:0 !important; min-height:0 !important; }
 :root { --navy:#08172c; --blue:#173b68; --gold:#d6b35d; --green:#00853f; --red:#e31b23; }
 .stApp { background: linear-gradient(135deg,#f4f7fb 0%,#eef2f8 100%); }
 .block-container { padding-top: 1.3rem; padding-bottom: 2rem; max-width: 1500px; }
